@@ -173,6 +173,19 @@ async function handleGuestMessage(message) {
     );
   }
 
+
+  // 防刷：短时间内只发一条“消息已送达”
+  const tipKey = `last-tip-${chatId}`;
+  const tipInterval = 10 * 1000; // 10秒内只发一次
+  let lastTip = await nfd.get(tipKey, { type: "json" });
+  if (!lastTip || Date.now() - lastTip > tipInterval) {
+    await sendMessage({
+      chat_id: chatId,
+      text: "收到了喵~会尽快回复的喵~",
+    });
+    await nfd.put(tipKey, Date.now());
+  }
+
   let forwardReq = await forwardMessage({
     chat_id: ADMIN_UID,
     from_chat_id: message.chat.id,
