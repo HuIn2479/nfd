@@ -1,8 +1,16 @@
-// 获取用户名（优先 username，其次姓+名，其次 first_name，否则未知用户）
+// 延迟函数
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+// MarkdownV2 转义函数
+function escapeMarkdownV2(text) {
+  return String(text).replace(/[\\_\*\[\]\(\)~`>#+\-=|{}\.!]/g, '\\$&');
+}
+// 获取用户名（优先姓+名，其次 username，其次 first_name，否则未知用户）
 function getDisplayName(user) {
-  if (user.username) return user.username;
   if (user.first_name && user.last_name)
     return user.last_name + " " + user.first_name;
+  if (user.username) return user.username;
   if (user.first_name) return user.first_name;
   return "未知用户";
 }
@@ -19,7 +27,7 @@ const notificationUrl =
 const startMsgUrl =
   "https://raw.githubusercontent.com/HuIn2479/nfd/main/data/startMessage.md";
 
-const enable_notification = true;
+const enable_notification = false;
 /**
  * Return url to telegram api, optionally with parameters added
  */
@@ -45,7 +53,7 @@ function makeReqBody(body) {
   };
 }
 
-function sendMessage(msg = {}, parseMode) {
+function sendMessage(msg = {}, parseMode = "MarkdownV2") {
   if (parseMode) msg.parse_mode = parseMode;
   return requestTelegram("sendMessage", makeReqBody(msg));
 }
@@ -112,8 +120,8 @@ async function onMessage(message) {
     const username = getDisplayName(message.from);
     let startMsg = await fetch(startMsgUrl).then((r) => r.text());
     startMsg = startMsg
-      .replace("{{username}}", username)
-      .replace("{{user_id}}", userId);
+      .replace("{{username}}", escapeMarkdownV2(username))
+      .replace("{{user_id}}", escapeMarkdownV2(userId));
     const keyboard = {
       inline_keyboard: [
         [{ text: "〇Enshō🌸", url: "https://ns.onedays.top/" }],
@@ -125,7 +133,7 @@ async function onMessage(message) {
         text: startMsg,
         reply_markup: keyboard,
       },
-      "Markdown"
+      "MarkdownV2"
     );
   }
   if (message.chat.id.toString() === ADMIN_UID) {
@@ -135,7 +143,7 @@ async function onMessage(message) {
           chat_id: ADMIN_UID,
           text: "使用方法，回复转发的消息，并发送回复消息，或者`/block`、`/unblock`、`/checkblock`等指令",
         },
-        "Markdown"
+        "MarkdownV2"
       );
     }
     if (/^\/block$/.exec(message.text)) {
@@ -167,23 +175,30 @@ async function handleGuestMessage(message) {
     return sendMessage(
       {
         chat_id: chatId,
-        text: "Your are blocked",
+        text: escapeMarkdownV2("*Your are blocked*"),
       },
-      "Markdown"
+      "MarkdownV2"
     );
   }
 
-
-  // 防刷：短时间内只发一条“消息已送达”
+  // 防刷：短时间内只发一条“消息已送达”,并自动撤回
   const tipKey = `last-tip-${chatId}`;
   const tipInterval = 10 * 1000; // 10秒内只发一次
   let lastTip = await nfd.get(tipKey, { type: "json" });
   if (!lastTip || Date.now() - lastTip > tipInterval) {
-    await sendMessage({
+    const tipMsg = await sendMessage({
       chat_id: chatId,
-      text: "收到了喵~会尽快回复的喵~",
+      text: escapeMarkdownV2("✉️ 收到了喵！会尽快回复的喵~"),
     });
     await nfd.put(tipKey, Date.now());
+    // 自动撤回
+    if (tipMsg && tipMsg.result && tipMsg.result.message_id) {
+      await sleep(10000);
+      await requestTelegram('deleteMessage', makeReqBody({
+        chat_id: chatId,
+        message_id: tipMsg.result.message_id
+      }));
+    }
   }
 
   let forwardReq = await forwardMessage({
@@ -206,9 +221,9 @@ async function handleNotify(message) {
     return sendMessage(
       {
         chat_id: ADMIN_UID,
-        text: `检测到骗子，UID\`${chatId}\``,
+        text: `检测到骗子，UID:\`${escapeMarkdownV2(chatId)}\``,
       },
-      "Markdown"
+      "MarkdownV2"
     );
   }
   if (enable_notification) {
@@ -220,7 +235,7 @@ async function handleNotify(message) {
           chat_id: ADMIN_UID,
           text: await fetch(notificationUrl).then((r) => r.text()),
         },
-        "Markdown"
+        "MarkdownV2"
       );
     }
   }
@@ -237,7 +252,7 @@ async function handleBlock(message) {
         chat_id: ADMIN_UID,
         text: "不能屏蔽自己",
       },
-      "Markdown"
+      "MarkdownV2"
     );
   }
   await nfd.put("isblocked-" + guestChantId, true);
@@ -245,9 +260,9 @@ async function handleBlock(message) {
   return sendMessage(
     {
       chat_id: ADMIN_UID,
-      text: `UID:\`${guestChantId}\` 屏蔽成功`,
+      text: `UID:\`${escapeMarkdownV2(guestChantId)}\` 屏蔽成功`,
     },
-    "Markdown"
+    "MarkdownV2"
   );
 }
 
@@ -262,9 +277,9 @@ async function handleUnBlock(message) {
   return sendMessage(
     {
       chat_id: ADMIN_UID,
-      text: `UID:\`${guestChantId}\` 解除屏蔽成功`,
+      text: `UID:\`${escapeMarkdownV2(guestChantId)}\` 解除屏蔽成功`,
     },
-    "Markdown"
+    "MarkdownV2"
   );
 }
 
@@ -278,9 +293,9 @@ async function checkBlock(message) {
   return sendMessage(
     {
       chat_id: ADMIN_UID,
-      text: `UID:\`${guestChantId}\`` + (blocked ? "被屏蔽" : "没有被屏蔽"),
+      text: `UID:\`${escapeMarkdownV2(guestChantId)}\`` + (blocked ? "被屏蔽" : "没有被屏蔽"),
     },
-    "Markdown"
+    "MarkdownV2"
   );
 }
 
@@ -288,13 +303,13 @@ async function checkBlock(message) {
  * Send plain text message
  * https://core.telegram.org/bots/api#sendmessage
  */
-async function sendPlainText(chatId, text, parseMode = "Markdown") {
+async function sendPlainText(chatId, text, parseMode = "MarkdownV2") {
   return sendMessage(
     {
       chat_id: chatId,
       text,
     },
-    parseMode
+    "MarkdownV2"
   );
 }
 
