@@ -269,7 +269,9 @@ async function handleNotify(message) {
       messageCount++;
       await nfd.put(`msg-count-${chatId}`, messageCount);
       // 格式化时间
-      const formatTime = (timestamp) => new Date(timestamp).toLocaleString('zh-CN');
+      const formatTime = (timestamp) => new Date(timestamp).toLocaleString('zh-CN', {
+        timeZone: 'Asia/Shanghai'
+      });
       let notifyText = await fetch(notificationUrl).then((r) => r.text());
       notifyText = notifyText
         .replace("{{username}}", escapeMarkdownV2(username))
