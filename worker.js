@@ -27,7 +27,7 @@ const notificationUrl =
 const startMsgUrl =
   "https://raw.githubusercontent.com/HuIn2479/nfd/main/data/startMessage.md";
 
-const enable_notification = false;
+const enable_notification = true;
 /**
  * Return url to telegram api, optionally with parameters added
  */
@@ -119,9 +119,14 @@ async function onMessage(message) {
     const userId = message.from.id;
     const username = getDisplayName(message.from);
     let startMsg = await fetch(startMsgUrl).then((r) => r.text());
+    // 动态生成用户链接：有用户名用 t.me/username，没有用 tg://user?id=
+    const userLink = message.from.username ? 
+      `https://t.me/${message.from.username}` : 
+      `tg://user?id=${userId}`;
     startMsg = startMsg
       .replace("{{username}}", escapeMarkdownV2(username))
-      .replace("{{user_id}}", escapeMarkdownV2(userId));
+      .replace("{{user_id}}", escapeMarkdownV2(userId))
+      .replace("{{user_link}}", userLink);
     const keyboard = {
       inline_keyboard: [
         [{ text: "〇Enshō🌸", url: "https://ns.onedays.top/" }],
@@ -137,6 +142,18 @@ async function onMessage(message) {
     );
   }
   if (message.chat.id.toString() === ADMIN_UID) {
+    if (/^\/checkblock\s+(.+)/.test(message.text)) {
+      const match = message.text.match(/^\/checkblock\s+(.+)/);
+      return checkBlockById(match[1].trim());
+    }
+    if (/^\/block\s+(.+)/.test(message.text)) {
+      const match = message.text.match(/^\/block\s+(.+)/);
+      return handleBlockById(match[1].trim());
+    }
+    if (/^\/unblock\s+(.+)/.test(message.text)) {
+      const match = message.text.match(/^\/unblock\s+(.+)/);
+      return handleUnBlockById(match[1].trim());
+    }
     if (!message?.reply_to_message?.chat) {
       return sendMessage(
         {
@@ -170,12 +187,19 @@ async function onMessage(message) {
 
 async function handleGuestMessage(message) {
   let chatId = message.chat.id;
+  // 检测用户是否输入了指令
+  if (message.text && message.text.startsWith('/')) {
+    return sendMessage({
+      chat_id: chatId,
+      text: escapeMarkdownV2("⚠️ 你不许发（哈气）"),
+    });
+  }
   let isblocked = await nfd.get("isblocked-" + chatId, { type: "json" });
   if (isblocked) {
     return sendMessage(
       {
         chat_id: chatId,
-        text: escapeMarkdownV2("*Your are blocked*"),
+        text: escapeMarkdownV2("You are blocked"),
       },
       "MarkdownV2"
     );
@@ -230,10 +254,34 @@ async function handleNotify(message) {
     let lastMsgTime = await nfd.get("lastmsg-" + chatId, { type: "json" });
     if (!lastMsgTime || Date.now() - lastMsgTime > NOTIFY_INTERVAL) {
       await nfd.put("lastmsg-" + chatId, Date.now());
+      // 获取用户信息
+      const username = getDisplayName(message.from);
+      const userId = message.from.id;
+      const language = message.from.language_code || '未知';
+      // 获取或设置首次使用时间
+      let firstSeen = await nfd.get(`first-seen-${chatId}`, { type: "json" });
+      if (!firstSeen) {
+        firstSeen = Date.now();
+        await nfd.put(`first-seen-${chatId}`, firstSeen);
+      }
+      // 获取消息计数
+      let messageCount = await nfd.get(`msg-count-${chatId}`, { type: "json" }) || 0;
+      messageCount++;
+      await nfd.put(`msg-count-${chatId}`, messageCount);
+      // 格式化时间
+      const formatTime = (timestamp) => new Date(timestamp).toLocaleString('zh-CN');
+      let notifyText = await fetch(notificationUrl).then((r) => r.text());
+      notifyText = notifyText
+        .replace("{{username}}", escapeMarkdownV2(username))
+        .replace("{{user_id}}", escapeMarkdownV2(userId.toString()))
+        .replace("{{language}}", escapeMarkdownV2(language))
+        .replace("{{first_seen}}", escapeMarkdownV2(formatTime(firstSeen)))
+        .replace("{{message_count}}", escapeMarkdownV2(messageCount.toString()))
+        .replace("{{last_active}}", escapeMarkdownV2(formatTime(Date.now())));
       return sendMessage(
         {
           chat_id: ADMIN_UID,
-          text: await fetch(notificationUrl).then((r) => r.text()),
+          text: notifyText,
         },
         "MarkdownV2"
       );
@@ -293,7 +341,52 @@ async function checkBlock(message) {
   return sendMessage(
     {
       chat_id: ADMIN_UID,
-      text: `UID:\`${escapeMarkdownV2(guestChantId)}\`` + (blocked ? "被屏蔽" : "没有被屏蔽"),
+      text: `UID:\`${escapeMarkdownV2(guestChantId)}\`` + (blocked ? " 被屏蔽" : " 没有被屏蔽"),
+    },
+    "MarkdownV2"
+  );
+}
+
+async function checkBlockById(userId) {
+  let blocked = await nfd.get("isblocked-" + userId, { type: "json" });
+
+  return sendMessage(
+    {
+      chat_id: ADMIN_UID,
+      text: `UID:\`${escapeMarkdownV2(userId)}\`` + (blocked ? " 被屏蔽" : " 没有被屏蔽"),
+    },
+    "MarkdownV2"
+  );
+}
+
+async function handleBlockById(userId) {
+  if (userId === ADMIN_UID) {
+    return sendMessage(
+      {
+        chat_id: ADMIN_UID,
+        text: "不能屏蔽自己",
+      },
+      "MarkdownV2"
+    );
+  }
+  await nfd.put("isblocked-" + userId, true);
+
+  return sendMessage(
+    {
+      chat_id: ADMIN_UID,
+      text: `UID:\`${escapeMarkdownV2(userId)}\` 屏蔽成功`,
+    },
+    "MarkdownV2"
+  );
+}
+
+async function handleUnBlockById(userId) {
+  await nfd.put("isblocked-" + userId, false);
+
+  return sendMessage(
+    {
+      chat_id: ADMIN_UID,
+      text: `UID:\`${escapeMarkdownV2(userId)}\` 解除屏蔽成功`,
     },
     "MarkdownV2"
   );
