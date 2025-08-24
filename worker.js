@@ -1,19 +1,52 @@
-// 延迟函数
+// ===== Telegram Bot NFD Worker =====
+// Cloudflare Workers 机器人用于消息转发和用户管理
+
+// ===== 工具函数 =====
+/**
+ * 延迟函数
+ */
 function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
-// MarkdownV2 转义函数
+
+/**
+ * MarkdownV2 转义函数
+ */
 function escapeMarkdownV2(text) {
-  return String(text).replace(/[\\_\*\[\]\(\)~`>#+\-=|{}\.!]/g, '\\$&');
+  return String(text).replace(/[\\_\*\[\]\(\)~`>#+\-=|{}\.!]/g, "\\$&");
 }
-// 获取用户名（优先姓+名，其次 username，其次 first_name，否则未知用户）
+
+/**
+ * 获取用户显示名称（优先姓+名，其次 username，最后 first_name）
+ */
 function getDisplayName(user) {
-  if (user.first_name && user.last_name)
-    return user.last_name + " " + user.first_name;
+  if (user.first_name && user.last_name) {
+    return `${user.last_name} ${user.first_name}`;
+  }
   if (user.username) return user.username;
   if (user.first_name) return user.first_name;
   return "未知用户";
 }
+
+/**
+ * 格式化时间（上海时区）
+ */
+function formatTime(timestamp) {
+  return new Date(timestamp).toLocaleString("zh-CN", {
+    timeZone: "Asia/Shanghai",
+  });
+}
+
+/**
+ * 生成用户链接
+ */
+function generateUserLink(user) {
+  return user.username
+    ? `https://t.me/${user.username}`
+    : `tg://user?id=${user.id}`;
+}
+
+// ===== 配置常量 =====
 const TOKEN = ENV_BOT_TOKEN; // Get it from @BotFather
 const WEBHOOK = "/endpoint";
 const SECRET = ENV_BOT_SECRET; // A-Z, a-z, 0-9, _ and -
@@ -23,51 +56,65 @@ const NOTIFY_INTERVAL = 3600 * 1000;
 const fraudDb =
   "https://raw.githubusercontent.com/HuIn2479/nfd/main/data/fraud.db";
 const notificationUrl =
-  "https://raw.githubusercontent.com/HuIn2479/nfd/main/data/notification.txt";
+  "https://raw.githubusercontent.com/HuIn2479/nfd/main/data/notification.md";
 const startMsgUrl =
   "https://raw.githubusercontent.com/HuIn2479/nfd/main/data/startMessage.md";
 
 const enable_notification = true;
+
+// ===== Telegram API 函数 =====
 /**
- * Return url to telegram api, optionally with parameters added
+ * 构建 Telegram API URL
  */
 function apiUrl(methodName, params = null) {
-  let query = "";
-  if (params) {
-    query = "?" + new URLSearchParams(params).toString();
-  }
+  const query = params ? `?${new URLSearchParams(params).toString()}` : "";
   return `https://api.telegram.org/bot${TOKEN}/${methodName}${query}`;
 }
 
+/**
+ * 请求 Telegram API
+ */
 function requestTelegram(methodName, body, params = null) {
   return fetch(apiUrl(methodName, params), body).then((r) => r.json());
 }
 
+/**
+ * 创建请求体
+ */
 function makeReqBody(body) {
   return {
     method: "POST",
-    headers: {
-      "content-type": "application/json",
-    },
+    headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   };
 }
 
+// ===== Telegram API 函数 =====
+/**
+ * 发送消息（默认 MarkdownV2 格式）
+ */
 function sendMessage(msg = {}, parseMode = "MarkdownV2") {
   if (parseMode) msg.parse_mode = parseMode;
   return requestTelegram("sendMessage", makeReqBody(msg));
 }
 
+/**
+ * 复制消息
+ */
 function copyMessage(msg = {}) {
   return requestTelegram("copyMessage", makeReqBody(msg));
 }
 
+/**
+ * 转发消息
+ */
 function forwardMessage(msg) {
   return requestTelegram("forwardMessage", makeReqBody(msg));
 }
 
+// ===== 事件监听器 =====
 /**
- * Wait for requests to the worker
+ * 监听 fetch 事件
  */
 addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
@@ -82,9 +129,9 @@ addEventListener("fetch", (event) => {
   }
 });
 
+// ===== Webhook 处理 =====
 /**
- * Handle requests to WEBHOOK
- * https://core.telegram.org/bots/api#update
+ * 处理 WEBHOOK 请求
  */
 async function handleWebhook(event) {
   // Check secret
@@ -120,9 +167,9 @@ async function onMessage(message) {
     const username = getDisplayName(message.from);
     let startMsg = await fetch(startMsgUrl).then((r) => r.text());
     // 动态生成用户链接：有用户名用 t.me/username，没有用 tg://user?id=
-    const userLink = message.from.username ? 
-      `https://t.me/${message.from.username}` : 
-      `tg://user?id=${userId}`;
+    const userLink = message.from.username
+      ? `https://t.me/${message.from.username}`
+      : `tg://user?id=${userId}`;
     startMsg = startMsg
       .replace("{{username}}", escapeMarkdownV2(username))
       .replace("{{user_id}}", escapeMarkdownV2(userId))
@@ -188,7 +235,7 @@ async function onMessage(message) {
 async function handleGuestMessage(message) {
   let chatId = message.chat.id;
   // 检测用户是否输入了指令
-  if (message.text && message.text.startsWith('/')) {
+  if (message.text && message.text.startsWith("/")) {
     return sendMessage({
       chat_id: chatId,
       text: escapeMarkdownV2("⚠️ 你不许发（哈气）"),
@@ -218,10 +265,13 @@ async function handleGuestMessage(message) {
     // 自动撤回
     if (tipMsg && tipMsg.result && tipMsg.result.message_id) {
       await sleep(10000);
-      await requestTelegram('deleteMessage', makeReqBody({
-        chat_id: chatId,
-        message_id: tipMsg.result.message_id
-      }));
+      await requestTelegram(
+        "deleteMessage",
+        makeReqBody({
+          chat_id: chatId,
+          message_id: tipMsg.result.message_id,
+        })
+      );
     }
   }
 
@@ -237,58 +287,77 @@ async function handleGuestMessage(message) {
   return handleNotify(message);
 }
 
+// ===== 通知和用户管理 =====
+/**
+ * 处理通知逻辑
+ */
 async function handleNotify(message) {
-  // 先判断是否是诈骗人员，如果是，则直接提醒
-  // 如果不是，则根据时间间隔提醒：用户id，交易注意点等
-  let chatId = message.chat.id;
+  const chatId = message.chat.id;
+  // 检查是否为诈骗用户
   if (await isFraud(chatId)) {
-    return sendMessage(
-      {
-        chat_id: ADMIN_UID,
-        text: `检测到骗子，UID:\`${escapeMarkdownV2(chatId)}\``,
-      },
-      "MarkdownV2"
-    );
+    return sendMessage({
+      chat_id: ADMIN_UID,
+      text: `检测到骗子，UID:\`${escapeMarkdownV2(chatId.toString())}\``,
+    });
   }
+  // 发送用户信息通知
   if (enable_notification) {
-    let lastMsgTime = await nfd.get("lastmsg-" + chatId, { type: "json" });
+    const lastMsgTime = await nfd.get(`lastmsg-${chatId}`, { type: "json" });
     if (!lastMsgTime || Date.now() - lastMsgTime > NOTIFY_INTERVAL) {
-      await nfd.put("lastmsg-" + chatId, Date.now());
-      // 获取用户信息
-      const username = getDisplayName(message.from);
-      const userId = message.from.id;
-      const language = message.from.language_code || '未知';
-      // 获取或设置首次使用时间
-      let firstSeen = await nfd.get(`first-seen-${chatId}`, { type: "json" });
-      if (!firstSeen) {
-        firstSeen = Date.now();
-        await nfd.put(`first-seen-${chatId}`, firstSeen);
-      }
-      // 获取消息计数
-      let messageCount = await nfd.get(`msg-count-${chatId}`, { type: "json" }) || 0;
-      messageCount++;
-      await nfd.put(`msg-count-${chatId}`, messageCount);
-      // 格式化时间
-      const formatTime = (timestamp) => new Date(timestamp).toLocaleString('zh-CN', {
-        timeZone: 'Asia/Shanghai'
-      });
+      await nfd.put(`lastmsg-${chatId}`, Date.now());
+      // 收集用户信息
+      const userInfo = await collectUserInfo(message);
+      // 生成并发送通知
       let notifyText = await fetch(notificationUrl).then((r) => r.text());
-      notifyText = notifyText
-        .replace("{{username}}", escapeMarkdownV2(username))
-        .replace("{{user_id}}", escapeMarkdownV2(userId.toString()))
-        .replace("{{language}}", escapeMarkdownV2(language))
-        .replace("{{first_seen}}", escapeMarkdownV2(formatTime(firstSeen)))
-        .replace("{{message_count}}", escapeMarkdownV2(messageCount.toString()))
-        .replace("{{last_active}}", escapeMarkdownV2(formatTime(Date.now())));
-      return sendMessage(
-        {
-          chat_id: ADMIN_UID,
-          text: notifyText,
-        },
-        "MarkdownV2"
-      );
+      notifyText = replaceUserInfoPlaceholders(notifyText, userInfo);
+      return sendMessage({
+        chat_id: ADMIN_UID,
+        text: notifyText,
+      });
     }
   }
+}
+
+/**
+ * 收集用户信息
+ */
+async function collectUserInfo(message) {
+  const chatId = message.chat.id;
+  const username = getDisplayName(message.from);
+  const userId = message.from.id;
+  const language = message.from.language_code || "未知";
+  // 获取或设置首次使用时间
+  let firstSeen = await nfd.get(`first-seen-${chatId}`, { type: "json" });
+  if (!firstSeen) {
+    firstSeen = Date.now();
+    await nfd.put(`first-seen-${chatId}`, firstSeen);
+  }
+  // 获取并更新消息计数
+  let messageCount =
+    (await nfd.get(`msg-count-${chatId}`, { type: "json" })) || 0;
+  messageCount++;
+  await nfd.put(`msg-count-${chatId}`, messageCount);
+  return {
+    username,
+    userId: userId.toString(),
+    language,
+    firstSeen: formatTime(firstSeen),
+    messageCount: messageCount.toString(),
+    lastActive: formatTime(Date.now()),
+  };
+}
+
+/**
+ * 替换用户信息占位符
+ */
+function replaceUserInfoPlaceholders(text, userInfo) {
+  return text
+    .replace("{{username}}", escapeMarkdownV2(userInfo.username))
+    .replace("{{user_id}}", escapeMarkdownV2(userInfo.userId))
+    .replace("{{language}}", escapeMarkdownV2(userInfo.language))
+    .replace("{{first_seen}}", escapeMarkdownV2(userInfo.firstSeen))
+    .replace("{{message_count}}", escapeMarkdownV2(userInfo.messageCount))
+    .replace("{{last_active}}", escapeMarkdownV2(userInfo.lastActive));
 }
 
 async function handleBlock(message) {
@@ -321,9 +390,7 @@ async function handleUnBlock(message) {
     "msg-map-" + message.reply_to_message.message_id,
     { type: "json" }
   );
-
   await nfd.put("isblocked-" + guestChantId, false);
-
   return sendMessage(
     {
       chat_id: ADMIN_UID,
@@ -343,7 +410,9 @@ async function checkBlock(message) {
   return sendMessage(
     {
       chat_id: ADMIN_UID,
-      text: `UID:\`${escapeMarkdownV2(guestChantId)}\`` + (blocked ? " 被屏蔽" : " 没有被屏蔽"),
+      text:
+        `UID:\`${escapeMarkdownV2(guestChantId)}\`` +
+        (blocked ? " 被屏蔽" : " 没有被屏蔽"),
     },
     "MarkdownV2"
   );
@@ -355,7 +424,9 @@ async function checkBlockById(userId) {
   return sendMessage(
     {
       chat_id: ADMIN_UID,
-      text: `UID:\`${escapeMarkdownV2(userId)}\`` + (blocked ? " 被屏蔽" : " 没有被屏蔽"),
+      text:
+        `UID:\`${escapeMarkdownV2(userId)}\`` +
+        (blocked ? " 被屏蔽" : " 没有被屏蔽"),
     },
     "MarkdownV2"
   );
@@ -430,6 +501,10 @@ async function unRegisterWebhook(event) {
   return new Response("ok" in r && r.ok ? "Ok" : JSON.stringify(r, null, 2));
 }
 
+// ===== 防诈骗系统 =====
+/**
+ * 检查用户是否为诈骗者
+ */
 async function isFraud(id) {
   id = id.toString();
   let db = await fetch(fraudDb).then((r) => r.text());
@@ -438,4 +513,31 @@ async function isFraud(id) {
   let flag = arr.filter((v) => v === id).length !== 0;
   console.log(flag);
   return flag;
+}
+
+/**
+ * 阻止用户（添加到诈骗列表）
+ */
+async function blockUser(userId) {
+  const fraudUsers = (await nfd.get("fraud_users", { type: "json" })) || [];
+  if (!fraudUsers.includes(userId.toString())) {
+    fraudUsers.push(userId.toString());
+    await nfd.put("fraud_users", fraudUsers);
+  }
+}
+
+/**
+ * 解除阻止用户（从诈骗列表移除）
+ */
+async function unblockUser(userId) {
+  const fraudUsers = (await nfd.get("fraud_users", { type: "json" })) || [];
+  const updatedList = fraudUsers.filter((id) => id !== userId.toString());
+  await nfd.put("fraud_users", updatedList);
+}
+
+/**
+ * 获取阻止列表
+ */
+async function getBlockedUsers() {
+  return (await nfd.get("fraud_users", { type: "json" })) || [];
 }
