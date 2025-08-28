@@ -17,6 +17,13 @@ function escapeMarkdownV2(text) {
 }
 
 /**
+ * 验证用户ID是否为纯数字
+ */
+function isValidUserId(userId) {
+  return /^\d+$/.test(userId.toString().trim());
+}
+
+/**
  * 获取用户显示名称（优先姓+名，其次 username，最后 first_name）
  */
 function getDisplayName(user) {
@@ -191,15 +198,36 @@ async function onMessage(message) {
   if (message.chat.id.toString() === ADMIN_UID) {
     if (/^\/checkblock\s+(.+)/.test(message.text)) {
       const match = message.text.match(/^\/checkblock\s+(.+)/);
-      return checkBlockById(match[1].trim());
+      const userId = match[1].trim();
+      if (!isValidUserId(userId)) {
+        return sendMessage({
+          chat_id: ADMIN_UID,
+          text: "用户ID必须为纯数字",
+        });
+      }
+      return checkBlockById(userId);
     }
     if (/^\/block\s+(.+)/.test(message.text)) {
       const match = message.text.match(/^\/block\s+(.+)/);
-      return handleBlockById(match[1].trim());
+      const userId = match[1].trim();
+      if (!isValidUserId(userId)) {
+        return sendMessage({
+          chat_id: ADMIN_UID,
+          text: "用户ID必须为纯数字",
+        });
+      }
+      return handleBlockById(userId);
     }
     if (/^\/unblock\s+(.+)/.test(message.text)) {
       const match = message.text.match(/^\/unblock\s+(.+)/);
-      return handleUnBlockById(match[1].trim());
+      const userId = match[1].trim();
+      if (!isValidUserId(userId)) {
+        return sendMessage({
+          chat_id: ADMIN_UID,
+          text: "用户ID必须为纯数字",
+        });
+      }
+      return handleUnBlockById(userId);
     }
     if (!message?.reply_to_message?.chat) {
       return sendMessage(
